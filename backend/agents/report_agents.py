@@ -149,13 +149,12 @@ def generate_performance_report(
         platform_breakdown=platform_breakdown,
     )
 
-    llm = get_analysis_llm(temperature=0.2, max_tokens=4096)
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ]
-
     try:
+        llm = get_analysis_llm(temperature=0.2, max_tokens=4096)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
         response = llm.invoke(messages)
         raw_text = response.content if hasattr(response, "content") else str(response)
         parsed = _clean_and_parse_json(raw_text)
@@ -343,13 +342,12 @@ def generate_content_strategy_report(
         platform=platform,
     )
 
-    llm = get_storytelling_llm(temperature=0.7, max_tokens=4096)
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ]
-
     try:
+        llm = get_storytelling_llm(temperature=0.7, max_tokens=4096)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
         response = invoke_storytelling_llm(llm, messages)
         raw_text = response.content if hasattr(response, "content") else str(response)
         parsed = _clean_and_parse_json(raw_text)

@@ -229,13 +229,14 @@ class ReportGenerationRequest(BaseModel):
 
 
 class SaveReportRequest(BaseModel):
-    """Payload to persist a report in MongoDB 'reports' collection."""
-    agency_id: str = Field(default="agency_default")
-    client_id: str
-    report_type: str
-    report_title: str
-    platform: str
-    reporting_period: Dict[str, Any]
-    report_data: Dict[str, Any]
+    """Payload to persist a report in MongoDB 'reports' and 'ai_outputs' collection."""
+    agency_id: Optional[str] = Field(default="agency_default")
+    client_id: Optional[str] = Field(default="client_default")
+    report_type: Optional[str] = Field(default="performance_analysis")
+    report_title: Optional[str] = Field(default="Marketing Report")
+    platform: Optional[str] = Field(default="All Platforms")
+    reporting_period: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"label": "Last 30 Days"})
+    report_data: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    report_payload: Optional[Dict[str, Any]] = None
     summary: Optional[str] = None
     pdf_url: Optional[str] = None

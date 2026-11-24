@@ -13,10 +13,6 @@ story_generation/.env
 !story_generation/.env.example
 
 # 2. Test Suites & Test Artifacts
-tests/
-backend/tests/
-test_*.py
-*_test.py
 .pytest_cache/
 .coverage
 htmlcov/

@@ -56,10 +56,24 @@ def _fetch_reels_from_db(
     collection = get_collection()
     query: Dict[str, Any] = {}
 
+    # Enforce verified ambient tenant isolation if set
+    from backend.security.tenant_context import current_tenant_cv
+    tenant = current_tenant_cv.get()
+    if tenant and tenant.agency_id:
+        target_agency = tenant.agency_id
+        if agency_name and not tenant.can_access_agency(agency_name):
+            agency_name = target_agency
+        elif not agency_name:
+            agency_name = target_agency
+
     if reel_ids:
         query["reel_id"] = {"$in": reel_ids}
     if agency_name:
-        query["agency_name"] = {"$regex": f"^{agency_name.strip()}$", "$options": "i"}
+        query["$or"] = [
+            {"agency_id": agency_name.strip()},
+            {"agency_name": {"$regex": f"^{agency_name.strip()}$", "$options": "i"}},
+            {"agency_name": {"$regex": agency_name.strip().replace("agency_", ""), "$options": "i"}},
+        ]
     if campaign_name:
         query["campaign_name"] = {"$regex": f"^{campaign_name.strip()}$", "$options": "i"}
 

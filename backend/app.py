@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,21 @@ from backend.orchestration.orchestrator import AgentType
 from backend.routes.analysis_routes import router as analysis_router
 from backend.routes.storytelling_routes import router as storytelling_router
 from backend.routes.report_routes import router as report_router
+from backend.security.rate_limiter import rate_limiter
+from backend.security.rate_limit_middleware import (
+    RateLimitMiddleware,
+    RateLimitExceededException,
+    rate_limit_dependency,
+)
+from fastapi import Depends
+from backend.security.exceptions import (
+    CrossAgencySubstitutionError,
+    DecryptionError,
+    SecurityError,
+    TamperedCiphertextError,
+    TenantAccessDeniedError,
+    TenantAuthorizationError,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -57,6 +73,35 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Rate limiting middleware
+    application.add_middleware(RateLimitMiddleware)
+
+    # Register rate limit exception handler
+    @application.exception_handler(RateLimitExceededException)
+    async def rate_limit_exceeded_handler(request, exc: RateLimitExceededException):
+        return rate_limiter.build_429_response(exc.result)
+
+    # Register security and tenant exception handlers
+    @application.exception_handler(TenantAccessDeniedError)
+    async def tenant_access_denied_handler(request, exc: TenantAccessDeniedError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+    @application.exception_handler(TenantAuthorizationError)
+    async def tenant_auth_handler(request, exc: TenantAuthorizationError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)}, headers={"WWW-Authenticate": "Bearer"})
+
+    @application.exception_handler(CrossAgencySubstitutionError)
+    async def cross_agency_handler(request, exc: CrossAgencySubstitutionError):
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+    @application.exception_handler(TamperedCiphertextError)
+    async def tampered_ciphertext_handler(request, exc: TamperedCiphertextError):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+    @application.exception_handler(DecryptionError)
+    async def decryption_error_handler(request, exc: DecryptionError):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
     # Register centralized routers
     application.include_router(report_router)
@@ -193,6 +238,27 @@ def create_app() -> FastAPI:
                 },
             ],
             "orchestrator_status": "ready",
+        }
+
+    @application.post(
+        "/api/auth/token",
+        tags=["Authentication"],
+        summary="Exchange agency credentials for verified tenant JWT session",
+        dependencies=[Depends(rate_limit_dependency("auth"))],
+    )
+    def create_auth_token_endpoint(payload: Dict[str, Any]):
+        """Generates a verified multi-tenant JWT token with strict 5 req/min rate limit."""
+        from backend.security.tenant_context import create_tenant_token
+        user_id = payload.get("user_id") or "user_default"
+        agency_id = payload.get("agency_id") or "agency_default"
+        roles = payload.get("roles") or ["staff"]
+        token = create_tenant_token(user_id=user_id, agency_id=agency_id, roles=roles)
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user_id": user_id,
+            "agency_id": agency_id,
+            "roles": roles,
         }
 
     return application

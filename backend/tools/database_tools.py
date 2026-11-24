@@ -53,14 +53,29 @@ def query_reel_data(
     query_filter: Dict[str, Any] = {}
     applied_filters: Dict[str, Any] = {}
 
+    # Enforce ambient tenant isolation if set in ContextVar
+    from backend.security.tenant_context import current_tenant_cv
+    tenant = current_tenant_cv.get()
+    if tenant:
+        clean_tenant_agency = tenant.agency_id
+        if agency_name and not tenant.can_access_agency(agency_name):
+            agency_name = clean_tenant_agency
+        if not agency_name:
+            agency_name = clean_tenant_agency
+
     if reel_id:
         query_filter["reel_id"] = reel_id.strip()
         applied_filters["reel_id"] = reel_id.strip()
 
     if agency_name:
-        # Case-insensitive matching for user convenience
-        query_filter["agency_name"] = {"$regex": f"^{agency_name.strip()}$", "$options": "i"}
-        applied_filters["agency_name"] = agency_name.strip()
+        # Match agency_id or agency_name case-insensitively
+        clean_name = agency_name.strip()
+        query_filter["$or"] = [
+            {"agency_id": clean_name},
+            {"agency_name": {"$regex": f"^{clean_name}$", "$options": "i"}},
+            {"agency_name": {"$regex": clean_name.replace("agency_", ""), "$options": "i"}},
+        ]
+        applied_filters["agency_name"] = clean_name
 
     if campaign_name:
         query_filter["campaign_name"] = {"$regex": f"^{campaign_name.strip()}$", "$options": "i"}

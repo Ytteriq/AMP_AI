@@ -8,9 +8,29 @@ with agency and client isolation, handling optional fields and empty database st
 from datetime import datetime, timezone, timedelta
 import logging
 from typing import Any, Dict, List, Optional
+import uuid
 from bson import ObjectId
 
-from backend.database.connection import get_database
+from backend.database.connection import (
+    AI_OUTPUTS_COLLECTION,
+    AGENCY_AI_METADATA_COLLECTION,
+    REPORTS_COLLECTION,
+    CLIENTS_COLLECTION,
+    CAMPAIGNS_COLLECTION,
+    CREATIVES_COLLECTION,
+    REELS_COLLECTION,
+    CONTENT_CALENDAR_COLLECTION,
+    CAMPAIGN_METRICS_COLLECTION,
+    PERIOD_REACH_COLLECTION,
+    AD_SETS_COLLECTION,
+    ADS_COLLECTION,
+    PRODUCTS_COLLECTION,
+    PLATFORM_CONNECTIONS_COLLECTION,
+    SYNC_JOBS_COLLECTION,
+    get_database,
+)
+from backend.security.encryption_service import encryption_service
+from backend.security.audit_logger import audit_logger
 
 logger = logging.getLogger("ai_reel.services.client_data")
 
@@ -28,22 +48,21 @@ def _clean_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_all_clients(agency_id: str = "agency_default") -> List[Dict[str, Any]]:
-    """Retrieves all clients strictly from MongoDB 'clients' collection."""
+    """Retrieves all clients belonging strictly to the specified agency."""
+    clean_agency = str(agency_id).strip()
     db = get_database()
-    coll = db["clients"]
-    docs = list(coll.find({"agency_id": agency_id}))
-    if not docs:
-        docs = list(coll.find({}))
+    coll = db[CLIENTS_COLLECTION]
+    docs = list(coll.find({"agency_id": clean_agency}))
     return [_clean_doc(d) for d in docs]
 
 
 def get_client_by_id(client_id: str, agency_id: str = "agency_default") -> Optional[Dict[str, Any]]:
-    """Retrieves single client profile strictly from MongoDB 'clients' collection."""
+    """Retrieves single client profile with strict tenant agency scoping."""
+    clean_client = str(client_id).strip()
+    clean_agency = str(agency_id).strip()
     db = get_database()
-    coll = db["clients"]
-    doc = coll.find_one({"client_id": client_id, "agency_id": agency_id})
-    if not doc:
-        doc = coll.find_one({"client_id": client_id})
+    coll = db[CLIENTS_COLLECTION]
+    doc = coll.find_one({"client_id": clean_client, "agency_id": clean_agency})
     return _clean_doc(doc) if doc else None
 
 
@@ -56,39 +75,46 @@ def get_client_campaign_data(
     campaign_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Retrieves live campaign records from 'campaigns' collection.
-    If 'campaigns' is empty, seamlessly falls back to 'reels' collection so existing marketing
-    records can power report generation immediately.
+    Retrieves live campaign records from 'campaigns' collection with strict agency scoping.
+    If 'campaigns' is empty, falls back to agency-owned 'reels' records.
     """
     campaign_records: List[Dict[str, Any]] = []
+    clean_client = str(client_id).strip()
+    clean_agency = str(agency_id).strip()
 
     try:
         db = get_database()
-        # 1. Check primary 'campaigns' collection
-        query: Dict[str, Any] = {"client_id": client_id}
+        # 1. Check primary 'campaigns' collection strictly scoped by agency_id
+        query: Dict[str, Any] = {"client_id": clean_client, "agency_id": clean_agency}
         if platform and platform != "All Platforms":
             query["platform"] = platform
         if campaign_filter:
             query["campaign_name"] = {"$regex": campaign_filter, "$options": "i"}
 
-        docs = list(db["campaigns"].find(query))
+        docs = list(db[CAMPAIGNS_COLLECTION].find(query))
         if docs:
             return [_clean_doc(d) for d in docs]
 
-        # 2. Check existing 'reels' collection as fallback
-        reels_query: Dict[str, Any] = {}
-        client = get_client_by_id(client_id, agency_id)
-        if client:
-            client_name = client["client_name"].lower()
-            reels_query["$or"] = [
-                {"reel_name": {"$regex": client_name.split()[0], "$options": "i"}},
-                {"campaign_name": {"$regex": client_name.split()[0], "$options": "i"}},
+        # 2. Check existing 'reels' collection as fallback, strictly scoped to this agency
+        reels_query: Dict[str, Any] = {
+            "$or": [
+                {"agency_id": clean_agency},
+                {"agency_name": {"$regex": clean_agency.replace("agency_", ""), "$options": "i"}},
             ]
-        reels = list(db["reels"].find(reels_query).limit(10))
-        if not reels:
-            # If no client-specific reels, retrieve general reel records
-            reels = list(db["reels"].find().limit(10))
+        }
+        client = get_client_by_id(clean_client, clean_agency)
+        if client:
+            client_first_word = client["client_name"].split()[0]
+            reels_query["$and"] = [
+                {
+                    "$or": [
+                        {"reel_name": {"$regex": client_first_word, "$options": "i"}},
+                        {"campaign_name": {"$regex": client_first_word, "$options": "i"}},
+                    ]
+                }
+            ]
 
+        reels = list(db[REELS_COLLECTION].find(reels_query).limit(10))
         if reels:
             for r in reels:
                 spend = float(r.get("ad_spend") or 0.0)
@@ -101,8 +127,8 @@ def get_client_campaign_data(
                 campaign_records.append({
                     "campaign_id": str(r.get("reel_id") or r.get("_id")),
                     "campaign_name": r.get("reel_name") or r.get("campaign_name") or "Reel Campaign",
-                    "client_id": client_id,
-                    "agency_id": agency_id,
+                    "client_id": clean_client,
+                    "agency_id": clean_agency,
                     "platform": "Instagram / Meta",
                     "status": "ACTIVE",
                     "spend": spend,
@@ -139,39 +165,141 @@ def get_client_previous_period_data(current_campaigns: List[Dict[str, Any]]) -> 
     return previous_records
 
 
-def get_client_creatives(client_id: str) -> List[Dict[str, Any]]:
+def get_client_creatives(client_id: str, agency_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves creative performance records strictly from MongoDB 'creatives' collection."""
+    clean_client = str(client_id).strip()
     db = get_database()
-    docs = list(db["creatives"].find({"client_id": client_id}))
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[CREATIVES_COLLECTION].find(query))
+    if not docs:
+        docs = list(db[CREATIVES_COLLECTION].find({"client_id": clean_client}))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_content_calendar(client_id: str, agency_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves scheduled content calendar entries from MongoDB 'content_calendar' collection."""
+    clean_client = str(client_id).strip()
+    db = get_database()
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[CONTENT_CALENDAR_COLLECTION].find(query).sort("scheduled_date", 1))
+    if not docs:
+        docs = list(db[CONTENT_CALENDAR_COLLECTION].find({"client_id": clean_client}).sort("scheduled_date", 1))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_daily_metrics(
+    client_id: str,
+    agency_id: Optional[str] = None,
+    campaign_id: Optional[str] = None,
+    days: int = 30,
+) -> List[Dict[str, Any]]:
+    """
+    Retrieves daily time-increment metrics from 'campaign_metrics' for 30/60-day trends,
+    period comparisons, and creative fatigue analysis.
+    """
+    clean_client = str(client_id).strip()
+    db = get_database()
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    if campaign_id:
+        query["campaign_id"] = str(campaign_id).strip()
+
+    docs = list(db[CAMPAIGN_METRICS_COLLECTION].find(query).sort("date", -1).limit(days * 10))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_period_reach(client_id: str, agency_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves non-additive period-level reach and frequency at account & campaign level from 'period_reach'.
+    """
+    clean_client = str(client_id).strip()
+    db = get_database()
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+
+    doc = db[PERIOD_REACH_COLLECTION].find_one(query, sort=[("period_end", -1)])
+    return _clean_doc(doc) if doc else None
+
+
+def get_client_ad_sets(campaign_id: str, agency_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves Meta Ad Set configurations from 'ad_sets' collection."""
+    db = get_database()
+    query: Dict[str, Any] = {"campaign_id": str(campaign_id).strip()}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[AD_SETS_COLLECTION].find(query))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_ads(campaign_id: str, agency_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves Meta ad configurations from 'ads' collection."""
+    db = get_database()
+    query: Dict[str, Any] = {"campaign_id": str(campaign_id).strip()}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[ADS_COLLECTION].find(query))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_meta_products(client_id: str, agency_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves verified Meta Catalog products from 'products' collection."""
+    clean_client = str(client_id).strip()
+    db = get_database()
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[PRODUCTS_COLLECTION].find(query))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_platform_connections(client_id: str, agency_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves synced Meta Ad Account metadata from 'platform_connections' collection."""
+    clean_client = str(client_id).strip()
+    db = get_database()
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[PLATFORM_CONNECTIONS_COLLECTION].find(query))
+    return [_clean_doc(d) for d in docs]
+
+
+def get_client_sync_jobs(client_id: str, agency_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+    """Retrieves Meta API synchronization audit jobs from 'sync_jobs' collection."""
+    clean_client = str(client_id).strip()
+    db = get_database()
+    query: Dict[str, Any] = {"client_id": clean_client}
+    if agency_id:
+        query["agency_id"] = str(agency_id).strip()
+    docs = list(db[SYNC_JOBS_COLLECTION].find(query).sort("created_at", -1).limit(limit))
     return [_clean_doc(d) for d in docs]
 
 
 def get_dashboard_summary(agency_id: str = "agency_default") -> Dict[str, Any]:
-    """Computes high-level agency dashboard overview metrics."""
-    clients = get_all_clients(agency_id)
+    """Computes high-level agency dashboard overview metrics strictly scoped by agency_id."""
+    clean_agency = str(agency_id).strip()
+    clients = get_all_clients(clean_agency)
     total_clients = len(clients)
 
     all_campaigns: List[Dict[str, Any]] = []
     for c in clients:
-        all_campaigns.extend(get_client_campaign_data(c["client_id"], agency_id))
+        all_campaigns.extend(get_client_campaign_data(c["client_id"], clean_agency))
 
     total_spend = sum(float(c.get("spend") or 0.0) for c in all_campaigns)
     total_revenue = sum(float(c.get("revenue") or 0.0) for c in all_campaigns)
     avg_roas = round(total_revenue / total_spend, 2) if total_spend > 0 else None
     active_campaigns = sum(1 for c in all_campaigns if c.get("status") == "ACTIVE")
 
-    # Retrieve recent reports from MongoDB
-    recent_reports: List[Dict[str, Any]] = []
-    try:
-        db = get_database()
-        cursor = db["reports"].find({"agency_id": agency_id}).sort("creation_date", -1).limit(5)
-        for r in cursor:
-            recent_reports.append(_clean_doc(r))
-    except Exception:
-        pass
+    # Retrieve recent reports strictly for this agency
+    recent_reports = get_saved_reports(agency_id=clean_agency)[:5]
 
     return {
-        "agency_id": agency_id,
+        "agency_id": clean_agency,
         "total_clients": total_clients,
         "total_campaigns": len(all_campaigns),
         "active_campaigns": active_campaigns,
@@ -182,29 +310,160 @@ def get_dashboard_summary(agency_id: str = "agency_default") -> Dict[str, Any]:
     }
 
 
-def save_report_to_db(report_payload: Dict[str, Any]) -> str:
-    """Stores a generated report in MongoDB 'reports' collection."""
+def save_ai_output(
+    agency_id: str,
+    user_id: str,
+    feature: str,
+    payload: Any,
+    record_id: Optional[str] = None,
+) -> str:
+    """
+    Encrypts any AI output with the agency's AES-256-GCM DEK and persists it into 'ai_outputs'.
+    Writes non-sensitive search metadata into 'agency_ai_metadata'.
+    """
+    clean_agency = str(agency_id).strip()
+    clean_user = str(user_id).strip()
+    out_id = str(record_id or f"AI_{uuid.uuid4().hex[:12].upper()}").strip()
+
+    encrypted_doc = encryption_service.encrypt_agency_data(
+        agency_id=clean_agency,
+        record_id=out_id,
+        data=payload,
+        user_id=clean_user,
+        feature=feature,
+    )
+
+    db = get_database()
+    db[AI_OUTPUTS_COLLECTION].replace_one({"_id": out_id}, encrypted_doc, upsert=True)
+
+    # Store non-sensitive metadata for fast filtering without decryption
+    meta_doc = {
+        "_id": out_id,
+        "agencyId": clean_agency,
+        "userId": clean_user,
+        "feature": feature,
+        "createdAt": encrypted_doc["createdAt"],
+    }
+    if isinstance(payload, dict):
+        if "report_title" in payload:
+            meta_doc["report_title"] = payload["report_title"]
+        if "client_id" in payload:
+            meta_doc["client_id"] = payload["client_id"]
+        elif "client_info" in payload and isinstance(payload["client_info"], dict):
+            meta_doc["client_id"] = payload["client_info"].get("client_id")
+            meta_doc["client_name"] = payload["client_info"].get("client_name")
+
+    db[AGENCY_AI_METADATA_COLLECTION].replace_one({"_id": out_id}, meta_doc, upsert=True)
+
+    audit_logger.log_event(
+        event_type="AI_OUTPUT_SAVED_ENCRYPTED",
+        agency_id=clean_agency,
+        user_id=clean_user,
+        resource_id=out_id,
+        details={"feature": feature},
+    )
+
+    return out_id
+
+
+def get_ai_output(agency_id: str, record_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves and decrypts a specific AI output belonging strictly to agency_id.
+    Prevents insecure direct object reference (IDOR).
+    """
+    clean_agency = str(agency_id).strip()
+    clean_record = str(record_id).strip()
+
+    db = get_database()
+    doc = db[AI_OUTPUTS_COLLECTION].find_one({"_id": clean_record, "agencyId": clean_agency})
+    if not doc:
+        return None
+
+    decrypted_content = encryption_service.decrypt_agency_data(clean_agency, clean_record, doc)
+    return decrypted_content
+
+
+def list_ai_outputs(
+    agency_id: str,
+    feature: Optional[str] = None,
+    client_id: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    Lists and decrypts AI outputs belonging strictly to agency_id.
+    """
+    clean_agency = str(agency_id).strip()
+    db = get_database()
+
+    query: Dict[str, Any] = {"agencyId": clean_agency}
+    if feature:
+        query["feature"] = feature
+
+    cursor = db[AI_OUTPUTS_COLLECTION].find(query).sort("createdAt", -1).limit(limit)
+    results = []
+    for doc in cursor:
+        try:
+            decrypted = encryption_service.decrypt_agency_data(clean_agency, doc["_id"], doc)
+            if isinstance(decrypted, dict):
+                if client_id:
+                    c_id = decrypted.get("client_id") or decrypted.get("client_info", {}).get("client_id")
+                    if c_id != client_id:
+                        continue
+                if "_id" not in decrypted:
+                    decrypted["_id"] = doc["_id"]
+                results.append(decrypted)
+        except Exception as exc:
+            logger.error("Failed to decrypt ai_output '%s' for agency '%s': %s", doc.get("_id"), clean_agency, exc)
+
+    return results
+
+
+def save_report_to_db(report_payload: Dict[str, Any], agency_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
+    """
+    Stores a generated report in MongoDB 'ai_outputs' collection with AES-256-GCM encryption.
+    Preserves backward-compatible return format (report_id string).
+    """
+    rec_agency = agency_id or report_payload.get("agency_id") or "agency_default"
+    rec_user = user_id or report_payload.get("user_id") or "system"
+    report_id = report_payload.get("report_id") or f"REP_{uuid.uuid4().hex[:8].upper()}"
+
+    record = dict(report_payload)
+    record["report_id"] = report_id
+    record["agency_id"] = rec_agency
+    record["creation_date"] = record.get("creation_date") or datetime.now(timezone.utc).isoformat()
+
+    # Save to encrypted ai_outputs
+    save_ai_output(
+        agency_id=rec_agency,
+        user_id=rec_user,
+        feature="marketing_report",
+        payload=record,
+        record_id=report_id,
+    )
+
+    # Also keep sanitized record in 'reports' collection for legacy compatibility
     try:
         db = get_database()
-        coll = db["reports"]
-        record = dict(report_payload)
-        record["creation_date"] = datetime.now(timezone.utc).isoformat()
-        res = coll.insert_one(record)
-        return str(res.inserted_id)
+        coll = db[REPORTS_COLLECTION]
+        sanitized_record = {
+            "_id": report_id,
+            "report_id": report_id,
+            "agency_id": rec_agency,
+            "client_id": record.get("client_info", {}).get("client_id") or record.get("client_id"),
+            "report_title": record.get("report_title"),
+            "creation_date": record["creation_date"],
+            "encrypted": True,
+        }
+        coll.replace_one({"_id": report_id}, sanitized_record, upsert=True)
     except Exception as exc:
-        logger.error("Failed to persist report to MongoDB: %s", exc)
-        return report_payload.get("report_id", "local_saved")
+        logger.debug("Legacy reports collection update: %s", exc)
+
+    return report_id
 
 
 def get_saved_reports(agency_id: str = "agency_default", client_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Retrieves previously generated reports from MongoDB."""
-    try:
-        db = get_database()
-        query: Dict[str, Any] = {"agency_id": agency_id}
-        if client_id:
-            query["client_id"] = client_id
-        cursor = db["reports"].find(query).sort("creation_date", -1).limit(20)
-        return [_clean_doc(d) for d in cursor]
-    except Exception as exc:
-        logger.debug("Failed to list saved reports: %s", exc)
-        return []
+    """
+    Retrieves and decrypts saved reports strictly belonging to agency_id.
+    """
+    clean_agency = str(agency_id).strip()
+    return list_ai_outputs(agency_id=clean_agency, feature="marketing_report", client_id=client_id, limit=20)
