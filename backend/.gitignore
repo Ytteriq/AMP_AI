@@ -1,0 +1,48 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python cache & virtual environment
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.venv/
+*.egg-info/
+
+# Tests & testing artifacts
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+htmlcov/
+
+# HTML test interfaces
+*.html
+
+# Database seeding & local caches
+database/seed_sample_clients.py
+database/verify_seed.py
+database/local_mongo_cache.json
+insert_sample_reels.py
+*seed*.py
+*verify*.py
+*insert*.py
+
+# Vector Store / Local Persistence
+chroma_db/
+*.parquet
+*.sqlite
+*.db
+
+# Editor & OS files
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+.DS_Store
+*.log

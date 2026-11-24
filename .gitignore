@@ -1,0 +1,72 @@
+# =============================================================================
+# Render & Git Deployment Ignore Configuration (AI_REEL)
+# Excludes test files, HTML testing interfaces, and database seeding scripts
+# =============================================================================
+
+# 1. Environment & Secrets
+.env
+*.env
+backend/.env
+story_generation/.env
+!.env.example
+!backend/.env.example
+!story_generation/.env.example
+
+# 2. Test Suites & Test Artifacts
+tests/
+backend/tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 3. HTML Interfaces & Frontend Test UI
+*.html
+index.html
+backend/index.html
+backend/scriptwriter.html
+story_generation/index.html
+
+# 4. Database Seeding & Local Test Data Scripts
+backend/database/seed_sample_clients.py
+backend/database/verify_seed.py
+backend/database/local_mongo_cache.json
+backend/insert_sample_reels.py
+*seed*.py
+*verify*.py
+*insert*.py
+
+# 5. ChromaDB & Local Vector/Database Stores
+chroma_db/
+*.sqlite
+*.db
+
+# 6. Virtual Environments
+env/
+venv/
+.venv/
+backend/env/
+
+# 7. Python Bytecode, Caches & Distribution
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+dist/
+build/
+*.egg-info/
+
+# 8. Logs & System Runtime Artifacts
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 9. Operating System & Editor Metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
