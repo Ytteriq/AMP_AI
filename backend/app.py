@@ -41,7 +41,7 @@ def create_app() -> FastAPI:
         title="AI Reel Centralized Multi-Agent Platform",
         description=(
             "Centralized dual-agent AI marketing system for Indian agencies:\n"
-            "- Analysis Agent (Performance Analyst): MongoDB Atlas analytics, ROI metrics, ChromaDB playbooks.\n"
+            "- Analysis Agent (Performance Analyst): MongoDB Atlas analytics, ROI metrics, agency playbooks.\n"
             "- Storytelling Agent (Scriptwriter): 3 distinct Reel script variations (Hook, Story, Conversion).\n"
             "Unified through a single orchestration layer and single server on port 8000."
         ),

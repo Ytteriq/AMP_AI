@@ -3,7 +3,7 @@ main.py
 Centralized FastAPI application entrypoint for AI Reel Multi-Agent Platform.
 
 Coordinates:
-- Agent 1: AI Reel Performance Analyst (Analytics, MongoDB, ChromaDB, Mathematical Metrics)
+- Agent 1: AI Reel Performance Analyst (Analytics, MongoDB, Mathematical Metrics)
 - Agent 2: AI Reel Scriptwriter (Creative Hinglish/Hindi Storytelling & Script Generation)
 Through a centralized Orchestration Layer on port 8000.
 

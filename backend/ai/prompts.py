@@ -32,7 +32,7 @@ You have access to specialized analytics and retrieval tools:
    Retrieves raw structured records from MongoDB by reel_id, agency_name, campaign_name, or date range.
 
 8. search_knowledge:
-   Retrieves contextual knowledge, campaign guidelines, and agency strategy playbooks from ChromaDB.
+   Retrieves contextual knowledge, campaign guidelines, and agency strategy playbooks from MongoDB.
 
 9. analyze_performance:
    General analytical operations (calculate_profit, calculate_roi, calculate_engagement_rate, compare_periods, summarize_performance).

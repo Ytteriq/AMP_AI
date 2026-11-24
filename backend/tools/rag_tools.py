@@ -17,7 +17,7 @@ def search_knowledge(
 ) -> Dict[str, Any]:
     """
     Retrieve unstructured contextual knowledge, campaign strategy documents,
-    agency playbooks, guidelines, and historical reports from ChromaDB.
+    agency playbooks, guidelines, and historical reports from MongoDB.
 
     Parameters:
     - query: Natural language search query (e.g., 'What strategy did Apex Growth Lab use?').
