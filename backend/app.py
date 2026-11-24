@@ -19,6 +19,14 @@ from backend.orchestration.orchestrator import AgentType
 from backend.routes.analysis_routes import router as analysis_router
 from backend.routes.storytelling_routes import router as storytelling_router
 from backend.routes.report_routes import router as report_router
+from backend.security.exceptions import (
+    CrossAgencySubstitutionError,
+    DecryptionError,
+    SecurityError,
+    TamperedCiphertextError,
+    TenantAccessDeniedError,
+    TenantAuthorizationError,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -57,6 +65,27 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Register security and tenant exception handlers
+    @application.exception_handler(TenantAccessDeniedError)
+    async def tenant_access_denied_handler(request, exc: TenantAccessDeniedError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+    @application.exception_handler(TenantAuthorizationError)
+    async def tenant_auth_handler(request, exc: TenantAuthorizationError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)}, headers={"WWW-Authenticate": "Bearer"})
+
+    @application.exception_handler(CrossAgencySubstitutionError)
+    async def cross_agency_handler(request, exc: CrossAgencySubstitutionError):
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+    @application.exception_handler(TamperedCiphertextError)
+    async def tampered_ciphertext_handler(request, exc: TamperedCiphertextError):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+    @application.exception_handler(DecryptionError)
+    async def decryption_error_handler(request, exc: DecryptionError):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
     # Register centralized routers
     application.include_router(report_router)

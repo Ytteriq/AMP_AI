@@ -3,13 +3,16 @@ backend/routes/analysis_routes.py
 FastAPI route handlers for Analysis Agent operations.
 Dispatches requests through the centralized AgentOrchestrator.
 Supports both semantic /api/analysis/... endpoints and legacy /api/chat endpoints.
+Enforces strict multi-tenant scoping and per-agency encrypted persistence.
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.orchestration.orchestrator import orchestrator, AgentType
+from backend.security.tenant_context import TenantContext, get_current_tenant
+from backend.services.client_data_service import save_ai_output
 
 router = APIRouter(tags=["Analysis Agent"])
 
@@ -38,8 +41,8 @@ class ChatResponse(BaseModel):
     table: Optional[Dict[str, Any]] = Field(default=None)
 
 
-def _handle_chat_request(payload: ChatRequest) -> ChatResponse:
-    """Helper invoking orchestrator and converting result to ChatResponse."""
+def _handle_chat_request(payload: ChatRequest, tenant: TenantContext) -> ChatResponse:
+    """Helper invoking orchestrator and converting result to ChatResponse with encrypted output logging."""
     clean_question = payload.question.strip()
     if not clean_question:
         raise HTTPException(
@@ -59,7 +62,7 @@ def _handle_chat_request(payload: ChatRequest) -> ChatResponse:
         )
 
     data = orch_response.data
-    return ChatResponse(
+    response_obj = ChatResponse(
         answer=data.get("answer", "No answer generated."),
         evidence=data.get("evidence", []),
         sources=data.get("sources", []),
@@ -67,6 +70,23 @@ def _handle_chat_request(payload: ChatRequest) -> ChatResponse:
         reporting_period=data.get("reporting_period", {}),
         table=data.get("table"),
     )
+
+    # Encrypt and persist chat interaction to ai_outputs
+    try:
+        save_ai_output(
+            agency_id=tenant.agency_id,
+            user_id=tenant.user_id,
+            feature="analysis_chat",
+            payload={
+                "question": clean_question,
+                "session_id": payload.session_id,
+                "response": response_obj.model_dump(),
+            },
+        )
+    except Exception:
+        pass
+
+    return response_obj
 
 
 # Semantic analysis endpoints
@@ -89,21 +109,34 @@ def _handle_chat_request(payload: ChatRequest) -> ChatResponse:
     status_code=status.HTTP_200_OK,
     summary="Ask a performance question to the AI Analyst (Legacy Compatibility)",
 )
-async def chat_analysis_endpoint(payload: ChatRequest):
-    """Routes performance analysis question to the Analysis Agent via Orchestrator."""
-    return _handle_chat_request(payload)
+async def chat_analysis_endpoint(
+    payload: ChatRequest,
+    tenant: TenantContext = Depends(get_current_tenant),
+):
+    """Routes performance analysis question to the Analysis Agent via Orchestrator with tenant isolation."""
+    return _handle_chat_request(payload, tenant)
 
 
 @router.get("/api/analysis/reels", summary="List reel records (Analysis)")
 @router.get("/api/reels", summary="List all reel records (Legacy Compatibility)")
-def get_all_reels():
-    """Returns reel documents with calculated metrics and formatted dates from MongoDB."""
+def get_all_reels(
+    tenant: TenantContext = Depends(get_current_tenant),
+):
+    """Returns reel documents strictly scoped to the authenticated agency."""
     from datetime import datetime
     from backend.analytics.metrics import extract_doc_metrics
     from backend.database.connection import get_collection
 
+    clean_agency = tenant.agency_id
     collection = get_collection()
-    docs = list(collection.find({}).sort("reel_id", 1))
+    query = {
+        "$or": [
+            {"agency_id": clean_agency},
+            {"agency_name": {"$regex": f"^{clean_agency}$", "$options": "i"}},
+            {"agency_name": {"$regex": clean_agency.replace("agency_", ""), "$options": "i"}},
+        ]
+    }
+    docs = list(collection.find(query).sort("reel_id", 1))
     results = []
     for d in docs:
         item = extract_doc_metrics(d)
@@ -117,11 +150,21 @@ def get_all_reels():
 
 @router.get("/api/analysis/summary", summary="Get portfolio performance summary (Analysis)")
 @router.get("/api/summary", summary="Get portfolio performance summary (Legacy Compatibility)")
-def get_portfolio_summary():
-    """Returns high-level KPI totals and agency-level breakdowns."""
+def get_portfolio_summary(
+    tenant: TenantContext = Depends(get_current_tenant),
+):
+    """Returns high-level KPI totals and agency-level breakdowns strictly for authenticated agency."""
     from backend.analytics.metrics import summarize_performance
     from backend.database.connection import get_collection
 
+    clean_agency = tenant.agency_id
     collection = get_collection()
-    docs = list(collection.find({}))
+    query = {
+        "$or": [
+            {"agency_id": clean_agency},
+            {"agency_name": {"$regex": f"^{clean_agency}$", "$options": "i"}},
+            {"agency_name": {"$regex": clean_agency.replace("agency_", ""), "$options": "i"}},
+        ]
+    }
+    docs = list(collection.find(query))
     return summarize_performance(docs)

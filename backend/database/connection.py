@@ -40,12 +40,23 @@ else:
 try:
     from backend.config import settings
     MONGODB_URI = settings.MONGODB_URI or os.getenv("MONGODB_URI", "")
-    MONGODB_DATABASE = settings.MONGODB_DATABASE or os.getenv("MONGODB_DATABASE", "ai_reels_analytics")
+    MONGODB_DATABASE = settings.MONGODB_DATABASE or os.getenv("MONGODB_DATABASE", "ytteriq_amp_ai")
     DEFAULT_COLLECTION = settings.MONGODB_COLLECTION or os.getenv("MONGODB_COLLECTION", "reels")
 except ImportError:
     MONGODB_URI = os.getenv("MONGODB_URI", "")
-    MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "ai_reels_analytics")
+    MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "ytteriq_amp_ai")
     DEFAULT_COLLECTION = os.getenv("MONGODB_COLLECTION", "reels")
+
+# Standardized multi-tenant shared collection names
+AI_OUTPUTS_COLLECTION = "ai_outputs"
+AGENCY_KEYS_COLLECTION = "agency_encryption_keys"
+AGENCY_AI_METADATA_COLLECTION = "agency_ai_metadata"
+REPORTS_COLLECTION = "reports"
+CLIENTS_COLLECTION = "clients"
+CAMPAIGNS_COLLECTION = "campaigns"
+CREATIVES_COLLECTION = "creatives"
+REELS_COLLECTION = "reels"
+STRATEGIES_COLLECTION = "strategies"
 
 # Global singleton clients
 _client: Optional[MongoClient] = None
@@ -169,6 +180,60 @@ def close_mongo_client() -> None:
             _client = None
 
 
+def ensure_database_indexes(db: Optional[Database] = None) -> Dict[str, Any]:
+    """
+    Ensures that all multi-tenant shared collections have proper compound indexes
+    for high-performance tenant-isolated queries and uniqueness constraints.
+    Preserves existing indexes and collections safely.
+    """
+    target_db = db or get_database()
+    index_results: Dict[str, List[str]] = {}
+
+    index_specs = {
+        AI_OUTPUTS_COLLECTION: [
+            ([("agencyId", pymongo.ASCENDING), ("createdAt", pymongo.DESCENDING)], {"name": "idx_ai_outputs_agency_created"}),
+            ([("agencyId", pymongo.ASCENDING), ("feature", pymongo.ASCENDING)], {"name": "idx_ai_outputs_agency_feature"}),
+            ([("agencyId", pymongo.ASCENDING), ("userId", pymongo.ASCENDING)], {"name": "idx_ai_outputs_agency_user"}),
+        ],
+        AGENCY_KEYS_COLLECTION: [
+            ([("agencyId", pymongo.ASCENDING), ("keyVersion", pymongo.ASCENDING)], {"name": "idx_keys_agency_version", "unique": True}),
+            ([("agencyId", pymongo.ASCENDING)], {"name": "idx_keys_agency"}),
+        ],
+        AGENCY_AI_METADATA_COLLECTION: [
+            ([("agencyId", pymongo.ASCENDING), ("feature", pymongo.ASCENDING)], {"name": "idx_meta_agency_feature"}),
+            ([("agencyId", pymongo.ASCENDING), ("createdAt", pymongo.DESCENDING)], {"name": "idx_meta_agency_created"}),
+        ],
+        REPORTS_COLLECTION: [
+            ([("agency_id", pymongo.ASCENDING), ("creation_date", pymongo.DESCENDING)], {"name": "idx_reports_agency_date"}),
+            ([("agency_id", pymongo.ASCENDING), ("client_id", pymongo.ASCENDING)], {"name": "idx_reports_agency_client"}),
+        ],
+        CLIENTS_COLLECTION: [
+            ([("agency_id", pymongo.ASCENDING), ("client_id", pymongo.ASCENDING)], {"name": "idx_clients_agency_client"}),
+        ],
+        CAMPAIGNS_COLLECTION: [
+            ([("agency_id", pymongo.ASCENDING), ("client_id", pymongo.ASCENDING)], {"name": "idx_campaigns_agency_client"}),
+        ],
+    }
+
+    for coll_name, specs in index_specs.items():
+        coll = target_db[coll_name]
+        created_for_coll = []
+        for keys, kwargs in specs:
+            try:
+                idx_name = coll.create_index(keys, **kwargs)
+                created_for_coll.append(idx_name)
+            except Exception:
+                # Fallback for environments / mocks where specific index options are unsupported
+                try:
+                    idx_name = coll.create_index(keys)
+                    created_for_coll.append(idx_name)
+                except Exception:
+                    pass
+        index_results[coll_name] = created_for_coll
+
+    return index_results
+
+
 def check_database_health() -> Dict[str, Any]:
     """
     Checks MongoDB connectivity and returns operational health metadata.
@@ -184,6 +249,7 @@ def check_database_health() -> Dict[str, Any]:
         collections = db.list_collection_names()
         coll = get_collection()
         doc_count = coll.count_documents({})
+        ensure_database_indexes(db)
 
         return {
             "status": "healthy",

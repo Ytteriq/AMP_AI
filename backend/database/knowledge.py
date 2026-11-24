@@ -90,6 +90,15 @@ def search_knowledge_documents(
     if filter_metadata and "agency" in filter_metadata:
         agency_filter = filter_metadata["agency"]
 
+    # Check ambient tenant context
+    from backend.security.tenant_context import current_tenant_cv
+    tenant = current_tenant_cv.get()
+    if tenant:
+        if agency_filter and not tenant.can_access_agency(agency_filter):
+            agency_filter = tenant.agency_id
+        elif not agency_filter:
+            agency_filter = tenant.agency_id
+
     # 1. Try querying MongoDB Atlas
     results: List[Dict[str, Any]] = []
     try:

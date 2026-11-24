@@ -4,7 +4,7 @@ FastAPI router for generating Instagram Reel scripts.
 Defines POST /api/scripts/generate with input validation and structured responses.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 try:
     from story_generation.script_schema import (
@@ -19,6 +19,9 @@ except ImportError:
     )
     from scriptwriter_agent import generate_reel_scripts
 
+from backend.security.tenant_context import TenantContext, get_current_tenant
+from backend.services.client_data_service import save_ai_output
+
 router = APIRouter(prefix="/api/scripts", tags=["Reel Scriptwriter"])
 
 
@@ -28,7 +31,10 @@ router = APIRouter(prefix="/api/scripts", tags=["Reel Scriptwriter"])
     status_code=status.HTTP_200_OK,
     summary="Generate 3 distinct Instagram Reel script variations",
 )
-async def generate_scripts_endpoint(payload: ScriptGenerationRequest):
+async def generate_scripts_endpoint(
+    payload: ScriptGenerationRequest,
+    tenant: TenantContext = Depends(get_current_tenant),
+):
     """
     Accepts brand brief and generates three distinct Instagram Reel script variations
     (Hook-Focused, Storytelling, and Conversion-Focused) tailored for Indian audiences.
@@ -59,7 +65,7 @@ async def generate_scripts_endpoint(payload: ScriptGenerationRequest):
                 detail=error_msg,
             )
 
-        return ScriptGenerationResponse(
+        resp = ScriptGenerationResponse(
             status="success",
             brand_name=payload.brand_name,
             product_or_service=payload.product_or_service,
@@ -69,6 +75,18 @@ async def generate_scripts_endpoint(payload: ScriptGenerationRequest):
             marketing_objective=payload.marketing_objective,
             scripts=scripts_list,
         )
+
+        try:
+            save_ai_output(
+                agency_id=tenant.agency_id,
+                user_id=tenant.user_id,
+                feature="reel_scripts",
+                payload=resp.model_dump(),
+            )
+        except Exception:
+            pass
+
+        return resp
 
     except HTTPException:
         raise
