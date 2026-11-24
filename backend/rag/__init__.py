@@ -1,16 +1,8 @@
 """
 backend/rag/__init__.py
-Centralized strategy and knowledge retrieval package (powered by MongoDB).
+Centralized strategy and knowledge retrieval package (powered strictly by MongoDB).
 """
 
-from backend.database.knowledge import (
-    DEFAULT_STRATEGIES,
-    ensure_seed_strategies,
-    search_knowledge_documents,
-)
+from backend.database.knowledge import search_knowledge_documents
 
-__all__ = [
-    "search_knowledge_documents",
-    "ensure_seed_strategies",
-    "DEFAULT_STRATEGIES",
-]
+__all__ = ["search_knowledge_documents"]

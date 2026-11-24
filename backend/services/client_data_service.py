@@ -14,83 +14,6 @@ from backend.database.connection import get_database
 
 logger = logging.getLogger("ai_reel.services.client_data")
 
-# Fallback client profiles for local testing when collections are newly created
-DEFAULT_CLIENTS: List[Dict[str, Any]] = [
-    {
-        "agency_id": "agency_apex_growth",
-        "client_id": "client_scentora",
-        "client_name": "Scentora",
-        "industry": "Perfume & Fragrance",
-        "website": "https://scentora.in",
-        "brand_guidelines": "Tone: Luxury, elegant, sophisticated. Colors: Black and Gold. Focus on high craftsmanship and sensory aroma.",
-        "target_audience": "18–35. Young professionals and luxury fragrance buyers.",
-        "marketing_goals": ["Increase sales", "Brand awareness", "Website traffic"],
-        "products": ["Oud Noir", "Royal Musk", "Aqua Fresh"],
-        "connected_platforms": ["Meta Ads", "Instagram", "Google Ads"],
-    },
-    {
-        "agency_id": "agency_apex_growth",
-        "client_id": "client_skinaura",
-        "client_name": "SkinAura",
-        "industry": "Skincare & Beauty",
-        "website": "https://skinaura.in",
-        "brand_guidelines": "Tone: Friendly, educational and trustworthy. Colors: Pink and White. Clean, science-backed skincare formulations.",
-        "target_audience": "18–35. Skincare routine beginners and enthusiasts.",
-        "marketing_goals": ["Product awareness", "Conversions", "Customer acquisition"],
-        "products": ["Vitamin C Serum", "Niacinamide Serum", "Hydrating Moisturizer"],
-        "connected_platforms": ["Meta Ads", "Instagram", "Google Ads"],
-    },
-    {
-        "agency_id": "agency_apex_growth",
-        "client_id": "client_gandharva",
-        "client_name": "Gandharva",
-        "industry": "Hospitality & Hotels",
-        "website": "https://gandharvahotels.com",
-        "brand_guidelines": "Tone: Professional, welcoming and premium. Colors: Blue and White. Celebrating Indian warmth and world-class luxury.",
-        "target_audience": "25–55. Families, tourists and business travelers.",
-        "marketing_goals": ["Increase bookings", "Restaurant visits", "Brand awareness"],
-        "products": ["Deluxe Rooms (₹3,500/night)", "Premium Rooms (₹5,000/night)", "Restaurant Services"],
-        "connected_platforms": ["Meta Ads", "Instagram", "Google Ads"],
-    },
-    {
-        "agency_id": "agency_apex_growth",
-        "client_id": "client_pocketcafe",
-        "client_name": "Pocket Cafe",
-        "industry": "Food & Beverage",
-        "website": "https://pocketcafe.in",
-        "brand_guidelines": "Tone: Casual, energetic and youthful. Colors: Brown and Orange. Cozy study dates and quick artisan coffee.",
-        "target_audience": "18–30. Students, young professionals and food lovers.",
-        "marketing_goals": ["Increase footfall", "Online orders", "Social media engagement"],
-        "products": ["Cappuccino", "Cold Coffee", "Sandwich", "Pizza"],
-        "connected_platforms": ["Meta Ads", "Instagram", "Google Ads"],
-    },
-    {
-        "agency_id": "agency_apex_growth",
-        "client_id": "client_urbanstyle",
-        "client_name": "UrbanStyle",
-        "industry": "Fashion & Apparel",
-        "website": "https://urbanstyle.in",
-        "brand_guidelines": "Tone: Trendy, confident and modern. Colors: Black and White. Premium streetwear essentials for effortless everyday confidence.",
-        "target_audience": "18–35. Trend-conscious urban youth and casual shoppers.",
-        "marketing_goals": ["Increase online sales", "Customer acquisition", "Brand awareness"],
-        "products": ["Oversized T-Shirt", "Casual Shirt", "Denim Jeans", "Hoodie"],
-        "connected_platforms": ["Meta Ads", "Instagram", "Google Ads"],
-    },
-    {
-        "agency_id": "agency_default",
-        "client_id": "client_pulsefit",
-        "client_name": "PulseFit Activewear",
-        "industry": "Athleisure & Fitness Apparel",
-        "website": "https://pulsefitwear.com",
-        "brand_guidelines": "High energy, dynamic camera movements, neon accents, relatable gym & desk-to-gym lifestyle.",
-        "target_audience": "Fitness enthusiasts, gym goers, runners, and remote workers aged 18-35.",
-        "marketing_goals": ["Acquire new fitness apparel customers", "Drive Summer Launch sales", "Lower Cost Per Acquisition (CPA) below ₹450"],
-        "products": ["AeroFlex Compression Leggings", "BreezeLite Training Tee", "HydroShield Running Jacket"],
-        "connected_platforms": ["Meta Ads", "Instagram"],
-    },
-]
-
-
 def _clean_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Serializes MongoDB ObjectIds and datetimes for JSON transport."""
     out = {}
@@ -105,39 +28,23 @@ def _clean_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_all_clients(agency_id: str = "agency_default") -> List[Dict[str, Any]]:
-    """Retrieves all clients belonging to the specified agency, or all clients if no agency matches."""
-    try:
-        db = get_database()
-        coll = db["clients"]
-        docs = list(coll.find({"agency_id": agency_id}))
-        if not docs:
-            docs = list(coll.find({}))
-        if docs:
-            return [_clean_doc(d) for d in docs]
-    except Exception as exc:
-        logger.debug("MongoDB clients lookup failed, using default client catalog: %s", exc)
-
-    return DEFAULT_CLIENTS
+    """Retrieves all clients strictly from MongoDB 'clients' collection."""
+    db = get_database()
+    coll = db["clients"]
+    docs = list(coll.find({"agency_id": agency_id}))
+    if not docs:
+        docs = list(coll.find({}))
+    return [_clean_doc(d) for d in docs]
 
 
 def get_client_by_id(client_id: str, agency_id: str = "agency_default") -> Optional[Dict[str, Any]]:
-    """Retrieves single client profile by ID with agency ownership validation."""
-    try:
-        db = get_database()
-        coll = db["clients"]
-        doc = coll.find_one({"client_id": client_id, "agency_id": agency_id})
-        if not doc:
-            doc = coll.find_one({"client_id": client_id})
-        if doc:
-            return _clean_doc(doc)
-    except Exception as exc:
-        logger.debug("MongoDB client lookup failed: %s", exc)
-
-    # Search in default catalog
-    for c in DEFAULT_CLIENTS:
-        if c["client_id"] == client_id:
-            return c
-    return None
+    """Retrieves single client profile strictly from MongoDB 'clients' collection."""
+    db = get_database()
+    coll = db["clients"]
+    doc = coll.find_one({"client_id": client_id, "agency_id": agency_id})
+    if not doc:
+        doc = coll.find_one({"client_id": client_id})
+    return _clean_doc(doc) if doc else None
 
 
 def get_client_campaign_data(
@@ -184,12 +91,12 @@ def get_client_campaign_data(
 
         if reels:
             for r in reels:
-                spend = float(r.get("ad_spend") or 25000.0)
-                views = int(r.get("views") or 100000)
-                likes = int(r.get("likes") or 4500)
-                rev = float(r.get("attributed_revenue") or 35000.0)
+                spend = float(r.get("ad_spend") or 0.0)
+                views = int(r.get("views") or 0)
+                likes = int(r.get("likes") or 0)
+                rev = float(r.get("attributed_revenue") or 0.0)
                 clicks = int(likes * 1.5)
-                conv = max(10, int(clicks * 0.035))
+                conv = max(0, int(clicks * 0.035))
 
                 campaign_records.append({
                     "campaign_id": str(r.get("reel_id") or r.get("_id")),
@@ -208,77 +115,16 @@ def get_client_campaign_data(
             return campaign_records
 
     except Exception as exc:
-        logger.debug("Database campaign query: %s. Using synthetic baseline.", exc)
+        logger.error("Database campaign query failed: %s", exc)
+        raise
 
-    # Deterministic client campaign baseline for newly created collections
-    return _build_deterministic_client_campaigns(client_id)
-
-
-def _build_deterministic_client_campaigns(client_id: str) -> List[Dict[str, Any]]:
-    """Builds deterministic realistic campaign numbers for client reports."""
-    client = get_client_by_id(client_id)
-    c_name = client["client_name"] if client else "Brand"
-
-    return [
-        {
-            "campaign_id": "CMP_001",
-            "campaign_name": f"{c_name} - Summer Glow Prospecting",
-            "client_id": client_id,
-            "platform": "Meta Ads",
-            "status": "ACTIVE",
-            "spend": 45000.0,
-            "impressions": 380000,
-            "reach": 310000,
-            "clicks": 9800,
-            "conversions": 340,
-            "revenue": 118000.0,
-        },
-        {
-            "campaign_id": "CMP_002",
-            "campaign_name": f"{c_name} - Retargeting Cart Abandoners",
-            "client_id": client_id,
-            "platform": "Meta Ads",
-            "status": "ACTIVE",
-            "spend": 22000.0,
-            "impressions": 110000,
-            "reach": 85000,
-            "clicks": 4200,
-            "conversions": 280,
-            "revenue": 89000.0,
-        },
-        {
-            "campaign_id": "CMP_003",
-            "campaign_name": f"{c_name} - Top-of-Funnel Viral Hook Test",
-            "client_id": client_id,
-            "platform": "Instagram",
-            "status": "ACTIVE",
-            "spend": 32000.0,
-            "impressions": 520000,
-            "reach": 430000,
-            "clicks": 6100,
-            "conversions": 65,
-            "revenue": 24000.0,
-        },
-        {
-            "campaign_id": "CMP_004",
-            "campaign_name": f"{c_name} - Google Search High-Intent Keywords",
-            "client_id": client_id,
-            "platform": "Google Ads",
-            "status": "ACTIVE",
-            "spend": 18000.0,
-            "impressions": 48000,
-            "reach": 42000,
-            "clicks": 3100,
-            "conversions": 195,
-            "revenue": 62000.0,
-        },
-    ]
+    return []
 
 
 def get_client_previous_period_data(current_campaigns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Computes realistic prior period comparative records (e.g. 15% lower spend, baseline conversions)
-    to enable accurate period-over-period percentage change analysis.
+    Computes prior period comparative records from current MongoDB campaign records
+    when explicit previous period snapshots are not stored separately.
     """
     previous_records = []
     for c in current_campaigns:
@@ -294,41 +140,10 @@ def get_client_previous_period_data(current_campaigns: List[Dict[str, Any]]) -> 
 
 
 def get_client_creatives(client_id: str) -> List[Dict[str, Any]]:
-    """Retrieves creative performance records from 'creatives' collection."""
-    try:
-        db = get_database()
-        docs = list(db["creatives"].find({"client_id": client_id}))
-        if docs:
-            return [_clean_doc(d) for d in docs]
-    except Exception as exc:
-        logger.debug("Creatives lookup failed: %s", exc)
-
-    return [
-        {
-            "creative_name": "Problem/Solution Hook - 15s UGC Reel",
-            "format": "Video / Reel",
-            "headline": "Stop wasting money on products that don't last",
-            "impressions": 280000,
-            "clicks": 7200,
-            "conversions": 260,
-        },
-        {
-            "creative_name": "Aesthetic Product Unboxing & Texture Demo",
-            "format": "Carousels",
-            "headline": "Pure luxury in every drop",
-            "impressions": 160000,
-            "clicks": 4800,
-            "conversions": 190,
-        },
-        {
-            "creative_name": "Comparison Chart: Scentora vs Generic Brands",
-            "format": "Static Post",
-            "headline": "Why 10,000+ customers switched this month",
-            "impressions": 85000,
-            "clicks": 1800,
-            "conversions": 75,
-        },
-    ]
+    """Retrieves creative performance records strictly from MongoDB 'creatives' collection."""
+    db = get_database()
+    docs = list(db["creatives"].find({"client_id": client_id}))
+    return [_clean_doc(d) for d in docs]
 
 
 def get_dashboard_summary(agency_id: str = "agency_default") -> Dict[str, Any]:

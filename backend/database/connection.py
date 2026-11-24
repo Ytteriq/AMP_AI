@@ -40,104 +40,41 @@ else:
 try:
     from backend.config import settings
     MONGODB_URI = settings.MONGODB_URI or os.getenv("MONGODB_URI", "")
-    MONGODB_DATABASE = settings.MONGODB_DATABASE or os.getenv("MONGODB_DATABASE", "ai_reels_analytics")
+    MONGODB_DATABASE = settings.MONGODB_DATABASE or os.getenv("MONGODB_DATABASE", "ytteriq_amp_ai")
     DEFAULT_COLLECTION = settings.MONGODB_COLLECTION or os.getenv("MONGODB_COLLECTION", "reels")
 except ImportError:
     MONGODB_URI = os.getenv("MONGODB_URI", "")
-    MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "ai_reels_analytics")
+    MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "ytteriq_amp_ai")
     DEFAULT_COLLECTION = os.getenv("MONGODB_COLLECTION", "reels")
 
-# Global singleton clients
+# Global singleton client
 _client: Optional[MongoClient] = None
-_mock_client: Optional[Any] = None
-
-LOCAL_CACHE_FILE = Path(__file__).resolve().parent / "local_mongo_cache.json"
 
 
-def _load_local_cache_into_mock(mock_client: Any) -> None:
-    """Populates mongomock database from local_mongo_cache.json if available."""
-    if not LOCAL_CACHE_FILE.exists():
-        return
-    try:
-        with open(LOCAL_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        target_db = os.getenv("MONGODB_DATABASE", MONGODB_DATABASE)
-        db = mock_client[target_db]
-        for coll_name, docs in data.items():
-            if docs and coll_name not in db.list_collection_names():
-                clean_docs = []
-                for d in docs:
-                    doc_copy = dict(d)
-                    if "_id" in doc_copy and isinstance(doc_copy["_id"], str):
-                        try:
-                            doc_copy["_id"] = ObjectId(doc_copy["_id"])
-                        except Exception:
-                            pass
-                    clean_docs.append(doc_copy)
-                if clean_docs:
-                    db[coll_name].insert_many(clean_docs)
-    except Exception as exc:
-        pass
-
-
-def save_local_cache(db: Any) -> None:
-    """Persists collections from database to LOCAL_CACHE_FILE for seamless persistence."""
-    try:
-        data = {}
-        for coll_name in db.list_collection_names():
-            docs = []
-            for d in db[coll_name].find():
-                doc_copy = dict(d)
-                if "_id" in doc_copy:
-                    doc_copy["_id"] = str(doc_copy["_id"])
-                docs.append(doc_copy)
-            data[coll_name] = docs
-        with open(LOCAL_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
-    except Exception:
-        pass
-
-
-def get_mongo_client(allow_fallback: bool = True) -> Any:
+def get_mongo_client() -> MongoClient:
     """
-    Returns the singleton MongoClient instance.
-    First tries live MongoDB Atlas / local MongoDB cluster.
-    If unreachable, seamlessly activates an in-memory/persisted mock engine (mongomock)
-    so all data operations, seeding, and queries succeed without crashing.
+    Returns the singleton MongoClient instance connected strictly to MongoDB.
+    Raises ConnectionFailure if MONGODB_URI is missing or the cluster is unreachable.
     """
-    global _client, _mock_client
+    global _client
     if _client is not None:
         return _client
 
-    uri = os.getenv("MONGODB_URI", "")
-    if uri:
-        try:
-            client = MongoClient(
-                uri,
-                serverSelectionTimeoutMS=2000,
-                connectTimeoutMS=2000,
-                socketTimeoutMS=4000,
-                retryWrites=True,
-                appname="AI_Reel_Analyst",
-            )
-            # Ping test
-            client.admin.command("ping")
-            _client = client
-            return _client
-        except Exception:
-            if not allow_fallback:
-                raise
+    uri = os.getenv("MONGODB_URI", "") or MONGODB_URI
+    if not uri:
+        raise ConnectionFailure("MONGODB_URI is not configured in the environment.")
 
-    # Fallback to mongomock with persistent local cache
-    if _mock_client is None:
-        try:
-            import mongomock
-            _mock_client = mongomock.MongoClient()
-            _load_local_cache_into_mock(_mock_client)
-        except ImportError:
-            raise ConnectionFailure("Neither MongoDB Atlas nor mongomock is available.")
-
-    return _mock_client
+    client = MongoClient(
+        uri,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000,
+        socketTimeoutMS=10000,
+        retryWrites=True,
+        appname="AI_Reel_Analyst",
+    )
+    client.admin.command("ping")
+    _client = client
+    return _client
 
 
 def get_database(db_name: Optional[str] = None) -> Database:

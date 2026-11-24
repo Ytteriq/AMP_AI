@@ -49,7 +49,7 @@ class Settings:
 
     # MongoDB Atlas Configuration
     MONGODB_URI: str = os.getenv("MONGODB_URI", "").strip()
-    MONGODB_DATABASE: str = os.getenv("MONGODB_DATABASE", "ai_reels_analytics").strip()
+    MONGODB_DATABASE: str = os.getenv("MONGODB_DATABASE", "ytteriq_amp_ai").strip()
     MONGODB_COLLECTION: str = os.getenv("MONGODB_COLLECTION", "reels").strip()
 
     @classmethod
